@@ -22,7 +22,8 @@ function applyPlanLink(){
  const next={...state,settings:{...state.settings,start,payDay,daily:Number(daily),firstAmount:Number(firstAmount),sunday:false}};
  if(!valid(next)){alert('Μη έγκυρο πρόγραμμα εργασίας.');return}
  if(error){alert('Δεν άλλαξα τις ρυθμίσεις επειδή υπάρχει πρόβλημα με τα αποθηκευμένα δεδομένα.');return}
- if(!confirm('Εφαρμογή προγράμματος Πλαισίου; Τα υπάρχοντα έσοδα, έξοδα και υποχρεώσεις διατηρούνται.'))return;
+ const already=state.settings.start===start&&state.settings.payDay===payDay&&state.settings.daily===Number(daily)&&state.settings.firstAmount===Number(firstAmount)&&!state.settings.sunday;
+ if(!already&&!confirm('Εφαρμογή προγράμματος Πλαισίου; Τα υπάρχοντα έσοδα, έξοδα και υποχρεώσεις διατηρούνται.'))return;
  try{localStorage.setItem(KEY,JSON.stringify(next));state=next;history.replaceState(null,'',location.pathname+location.search)}catch(e){alert('Δεν ήταν δυνατή η αποθήκευση του προγράμματος.')}
 }
 applyPlanLink();
@@ -34,6 +35,9 @@ function workEntry(d){return state.entries.find(e=>e.kind==='income'&&e.source==
 function scheduled(d){return d>=state.settings.start&&(state.settings.sunday||new Date(d+'T12:00:00').getDay()!==0)&&!(Array.isArray(state.settings.daysOff)&&state.settings.daysOff.includes(d))}
 function rate(d){return d===state.settings.start?state.settings.firstAmount:state.settings.daily}
 function cycle(d){let a=state.settings.start,b=state.settings.payDay;for(let i=0;d>b&&i<10000;i++){a=plus(b,1);b=plus(b,15)}return [a,b]}
+function paymentDates(from,count=4){const [,first]=cycle(from);return Array.from({length:count},(_,i)=>plus(first,i*15))}
+function prettyDate(d){return d.slice(8)+'/'+d.slice(5,7)+'/'+d.slice(0,4)}
+function payPreview(d){const [a,b]=cycle(d);let total=0,paid=0;for(let t=a,i=0;t<=b&&i<370;t=plus(t,1),i++){const e=workEntry(t);if(e){total+=net(e);paid+=received(e)}else if(scheduled(t)){total+=rate(t)}}return {total,paid}}
 function plannedDays(a,b){const list=[];for(let t=a,i=0;t<=b&&i<370;t=plus(t,1),i++)if(scheduled(t)&&rate(t)>0)list.push(t);return list}
 function missingThrough(d){const [a,b]=cycle(d);return plannedDays(a,d<b?d:b).filter(t=>!workEntry(t))}
 function workRecord(d){return {id:uid(),kind:'income',source:'Πλαίσιο',date:d,amount:rate(d),tip:0,deduction:0,hours:0,status:'pending',paidDate:'',expectedDate:cycle(d)[1],note:'Μεροκάματο'}}
@@ -44,6 +48,7 @@ $('goalProgress').value=Math.max(0,Math.min(100,earned/state.settings.goal*100))
 $('sources').innerHTML=sources.map(s=>{const es=mi.filter(e=>e.source===s);return '<div class="row"><div><b>'+s+'</b><b>'+money(sum(es,net))+'</b></div><small>'+sum(es,e=>Number(e.hours||0))+' ώρες · αναμονή '+money(sum(es,pending))+'</small></div>'}).join('');
 const [a,b]=cycle(d);let amount=0,days=0,confirmed=0,alreadyPaid=0,html='';for(let t=a,i=0;t<=b&&i<370;t=plus(t,1),i++){const e=workEntry(t),on=scheduled(t);if(on||e){days++;amount+=e?net(e):rate(t);if(e){confirmed+=net(e);alreadyPaid+=received(e)}}const planned=e?net(e):on?rate(t):0;html+='<button data-work="'+t+'" '+(!on||t>d||e?'disabled ':'')+(e?'class="done"':'')+'>'+t.slice(8)+'/'+t.slice(5,7)+'<small>'+(on||e?money(planned):'Ρεπό')+'</small><small>'+(e?'✓':on?'Πλάνο':'—')+'</small></button>'}
 $('forecast').innerHTML='<p>Πληρωμή: <b>'+b.slice(8)+'/'+b.slice(5,7)+'/'+b.slice(0,4)+'</b></p><h2>'+money(amount)+'</h2><p>Σύνολο προβλεπόμενων αποδοχών · '+days+' ημέρες εργασίας</p><div class="grid"><div><small>Ήδη εισπράχθηκαν</small><b>'+money(alreadyPaid)+'</b></div><div><small>Αναμένεται να λάβεις</small><b>'+money(amount-alreadyPaid)+'</b></div></div><p>Επιβεβαιωμένα μεροκάματα: '+money(confirmed)+'. Το πρόγραμμα δεν καταχωρίζεται ως πραγματικό έσοδο μέχρι να επιβεβαιώσεις εργασία και είσπραξη.</p>';$('calendar').innerHTML=html;
+const dates=paymentDates(d,5);$('paymentDates').innerHTML=state.settings.daily?dates.map((p,i)=>{const v=payPreview(p);return '<div class="row"><div><b>'+prettyDate(p)+(i===0?' · Επόμενη':'')+'</b><b>'+money(v.total-v.paid)+'</b></div><small>Προβλεπόμενο υπόλοιπο πληρωμής · όχι επιβεβαιωμένη είσπραξη</small></div>'}).join(''):'<p>Ενεργοποίησε πρώτα το πρόγραμμα εργασίας.</p>';
 $('work').disabled=!!workEntry(d)||!scheduled(d);$('work').textContent=workEntry(d)?'✓ Καταχωρίστηκε':'✓ Δούλεψα σήμερα · '+money(rate(d));
 const missing=missingThrough(d),planned=sum(missing,rate);
 if($('autoToday'))$('autoToday').innerHTML='<div class="grid"><div><small>Σήμερα βάσει προγράμματος</small><b>'+money(scheduled(d)?rate(d):0)+'</b></div><div><small>Έως σήμερα · εκτίμηση</small><b>'+money(sum(plannedDays(a,d<b?d:b),t=>workEntry(t)?net(workEntry(t)):rate(t)))+'</b></div></div>';
