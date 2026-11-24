@@ -1,0 +1,4 @@
+*.local.json
+*tameio-private-settings.json
+*tameio-backup*.json
+.env
