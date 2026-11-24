@@ -60,6 +60,52 @@ connect.onclick=async()=>{if(busy||meta||error)return;const root=input.value.tri
 copy.onclick=async()=>{if(!meta)return;try{await navigator.clipboard.writeText(meta.key);note('Ο ιδιωτικός κωδικός αντιγράφηκε. Φύλαξέ τον με ασφάλεια.')}catch{prompt('Ιδιωτικός κωδικός σύνδεσης — φύλαξέ τον, μην τον κοινοποιείς:',meta.key)}};
 disconnect.onclick=()=>{if(busy||!meta)return;if(!confirm('Να αποσυνδεθεί αυτή η συσκευή; Κράτησε τον ιδιωτικό κωδικό. Τα τοπικά και online δεδομένα δεν διαγράφονται.'))return;localStorage.removeItem(META);meta=null;conflict=null;show();note('Τοπική αποθήκευση · όχι online')};
 pull.onclick=async()=>{if(busy||!meta||!conflict)return;if(!confirm('Να φορτωθεί το online αντίγραφο; Οι τοπικές αλλαγές θα φυλαχθούν σε αντίγραφο, αλλά δεν θα συνδυαστούν αυτόματα.'))return;busy=true;show();try{const c=conflict;restore(c.next);putMeta({...meta,version:c.remote.version,base:await fp(snapshot())});conflict=null;note('Online · συγχρονισμένο')}catch{note('Δεν έγινε επαναφορά.')}finally{busy=false;show()}};
+
+// Email is an unverified login identifier. The password is never sent to the server.
+// PBKDF2 separates the authentication proof from the AES key wrapping the existing vault secret.
+const accountForm=$('accountForm'),accountEmail=$('accountEmail'),accountPassword=$('accountPassword'),accountStatus=$('accountStatus');
+let accountBusy=false;
+async function accountKeys(email,password){
+ const id=hex(await digest('tameio-account-id-v1:'+email));
+ const material=await crypto.subtle.importKey('raw',ENC.encode(password),'PBKDF2',false,['deriveBits']);
+ const bits=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',iterations:600000,salt:ENC.encode('tameio-account-salt-v1:'+id)},material,512));
+ const proof=hex(bits.slice(0,32)),key=await crypto.subtle.importKey('raw',bits.slice(32),{name:'AES-GCM'},false,['encrypt','decrypt']);bits.fill(0);return {id,proof,key};
+}
+async function accountCall(action,data){
+ const r=await fetch(API.replace(/\/vault$/,'/account/'+action),{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data),signal:typeof AbortSignal.timeout==='function'?AbortSignal.timeout(90000):undefined});
+ if(!r.ok)throw Object.assign(Error('account request'),{status:r.status});return r.json();
+}
+async function unwrapRoot(wrapped,key){
+ const a=Uint8Array.from(atob(wrapped),s=>s.charCodeAt(0));if(a.length!==92)throw Error('invalid key envelope');
+ const root=DEC.decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:a.slice(0,12)},key,a.slice(12)));
+ if(!/^[a-f0-9]{64}$/.test(root))throw Error('invalid root');return root;
+}
+if(accountForm)accountForm.onsubmit=async e=>{
+ e.preventDefault();if(accountBusy||busy||error)return;
+ const action=e.submitter?.value==='register'?'register':'login',email=accountEmail.value.trim().toLowerCase(),password=accountPassword.value;
+ if(!/^[a-z0-9.!#$%&'*+/=?^_~\x60{|}-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(email)||email.length>254||password.length<14||password.length>256){accountStatus.textContent='Χρησιμοποίησε έγκυρο email και μοναδικό κωδικό τουλάχιστον 14 χαρακτήρων.';return}
+ if(action==='register'&&(!meta||meta.version<1)){accountStatus.textContent='Ενεργοποίησε πρώτα την online αποθήκευση στη συσκευή με τα σωστά στοιχεία.';return}
+ accountBusy=true;busy=true;show();for(const b of accountForm.querySelectorAll('button,input'))b.disabled=true;accountStatus.textContent='Επεξεργασία…';let rootToConnect=null;
+ try{
+  const a=await accountKeys(email,password);
+  if(action==='register'){
+   const root=meta.key,k=await keys(root),remote=await call(k);if(remote.version<1)throw Error('missing existing vault');
+   await decrypt(remote.ciphertext,k.key);
+   const wrapped=await encrypt(root,a.key);
+   await accountCall('register',{id:a.id,proof:a.proof,wrapped});
+   accountStatus.textContent='Ο λογαριασμός δημιουργήθηκε και συνδέθηκε με το υπάρχον Ταμείο. Φύλαξε και τον ιδιωτικό κωδικό ανάκτησης.';
+  }else{
+   const r=await accountCall('login',{id:a.id,proof:a.proof}),root=await unwrapRoot(r.wrapped,a.key);
+   if(meta&&meta.key!==root){accountStatus.textContent='Αυτή η συσκευή έχει άλλο ενεργό Ταμείο. Κράτησε αντίγραφο πριν το αποσυνδέσεις.';return}
+   if(meta){again=true;accountStatus.textContent='Ο λογαριασμός αντιστοιχεί στο ενεργό Ταμείο.'}
+   else rootToConnect=root;
+  }
+  accountPassword.value='';
+ }catch(e){accountStatus.textContent=e.status===409?'Το email χρησιμοποιείται ήδη. Δοκίμασε σύνδεση.':e.status===401?'Λάθος email ή κωδικός.':e.status===429?'Πολλές προσπάθειες. Δοκίμασε σε 10 λεπτά.':'Η σύνδεση δεν ολοκληρώθηκε. Τα υπάρχοντα δεδομένα δεν άλλαξαν.'}
+ finally{accountBusy=false;busy=false;show();for(const b of accountForm.querySelectorAll('button,input'))b.disabled=false}
+ if(rootToConnect){input.value=rootToConnect;try{await connect.onclick();accountStatus.textContent=meta?.key===rootToConnect?'Συνδέθηκες στο υπάρχον Ταμείο.':'Δεν φορτώθηκε το Ταμείο. Δοκίμασε ξανά.'}finally{input.value=''}}
+ if(again){again=false;schedule()}
+};
 retry.onclick=sync;
 const previousSave=save;save=function(){previousSave();if(meta&&!error)schedule()};
 const previousTransfer=transfer;transfer=function(raw){previousTransfer(raw);if(meta&&!error)schedule()};
