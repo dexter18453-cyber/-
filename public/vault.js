@@ -3,10 +3,19 @@
 const META='tameio_vault_v1',API='https://to-tameio-mou-sync.onrender.com/vault',ENC=new TextEncoder(),DEC=new TextDecoder();
 const panel=$('vaultPanel'),banner=$('vaultBanner'),status=$('vaultStatus'),create=$('vaultCreate'),connect=$('vaultConnect'),copy=$('vaultCopy'),input=$('vaultCode'),disconnect=$('vaultDisconnect'),pull=$('vaultPull'),retry=$('vaultRetry');
 let meta=null,busy=false,again=false,conflict=null,timeout;
+const SIGNOUT=META+'_signedout';
+let backupDB=null,backupQueue=Promise.resolve();
+function sessionDB(){if(!('indexedDB' in window))return Promise.reject(Error('unsupported'));if(!backupDB)backupDB=new Promise((resolve,reject)=>{const r=indexedDB.open('tameio-device-session',1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('session'))r.result.createObjectStore('session')};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);r.onblocked=()=>reject(Error('blocked'))});return backupDB}
+async function sessionIO(mode,value){const db=await sessionDB();return new Promise((resolve,reject)=>{const tx=db.transaction('session',mode==='read'?'readonly':'readwrite'),st=tx.objectStore('session'),r=mode==='read'?st.get('meta'):mode==='delete'?st.delete('meta'):st.put(value,'meta');tx.oncomplete=()=>resolve(r.result);tx.onabort=tx.onerror=()=>reject(tx.error)})}
+function backupSession(m){backupQueue=backupQueue.catch(()=>{}).then(()=>sessionIO(m?'write':'delete',m)).catch(()=>{})}
+function validMeta(m){return m&&/^[0-9a-f]{64}$/.test(m.key)&&Number.isSafeInteger(m.version)&&m.version>=0?m:null}
+function rememberDevice(){try{navigator.storage?.persist?.().catch(()=>{})}catch{}}
+function rememberAccount(email){if(meta){putMeta({...meta,email});show();rememberDevice()}}
+
 function note(s){status.textContent=s;banner.textContent=s}
-function readMeta(){try{const m=JSON.parse(localStorage.getItem(META));return m&&/^[0-9a-f]{64}$/.test(m.key)&&Number.isSafeInteger(m.version)&&m.version>=0?m:null}catch{return null}}
-function putMeta(m){localStorage.setItem(META,JSON.stringify(m));meta=m}
-function show(){create.hidden=connect.hidden=input.hidden=!!meta;copy.hidden=disconnect.hidden=retry.hidden=!meta;pull.hidden=!conflict;create.disabled=connect.disabled=copy.disabled=disconnect.disabled=pull.disabled=retry.disabled=busy}
+function readMeta(){try{const m=JSON.parse(localStorage.getItem(META));return validMeta(m)}catch{return null}}
+function putMeta(m){localStorage.setItem(META,JSON.stringify(m));localStorage.removeItem(SIGNOUT);meta=m;backupSession(m)}
+function show(){const profile=$('accountProfile');if(profile){profile.textContent=meta?(meta.email?'Συνδεδεμένος λογαριασμός: '+meta.email:'Συνδεδεμένο ιδιωτικό Ταμείο σε αυτή τη συσκευή'):'Δεν είσαι συνδεδεμένος σε αυτή τη συσκευή';$('accountForm').hidden=!!meta?.email; $('accountLogout').hidden=!meta; if(meta?.email)$('accountEmail').value=meta.email;}create.hidden=connect.hidden=input.hidden=!!meta;copy.hidden=disconnect.hidden=retry.hidden=!meta;pull.hidden=!conflict;create.disabled=connect.disabled=copy.disabled=disconnect.disabled=pull.disabled=retry.disabled=busy}
 function hex(a){return Array.from(new Uint8Array(a),x=>x.toString(16).padStart(2,'0')).join('')}
 async function digest(s){return crypto.subtle.digest('SHA-256',ENC.encode(s))}
 async function fp(s){return hex(await digest('tameio-snapshot-v1:'+s))}
@@ -52,13 +61,13 @@ connect.onclick=async()=>{if(busy||meta||error)return;const root=input.value.tri
  busy=true;show();note('Ανάκτηση online αντιγράφου…');
  try{const before=snapshot(),k=await keys(root),remote=await call(k);if(!remote.version){note('Δεν υπάρχει online αντίγραφο για αυτόν τον κωδικό.');return}const decoded=await decrypt(remote.ciphertext,k.key);
  if(snapshot()!==before){note('Έγιναν τοπικές αλλαγές. Δοκίμασε ξανά.');return}
- const hasData=state.entries.length||state.bills.length||state.settings.daily||state.settings.openingConfirmed||state.smart;
+ const hasData=state.entries.length||state.bills.length||state.shifts?.length||state.settings.daily||state.settings.openingConfirmed||state.smart;
  if(hasData&&before!==decoded.raw&&!confirm('Υπάρχουν τοπικά στοιχεία. Να φορτωθεί το online αντίγραφο; Θα διατηρηθεί προηγούμενο τοπικό αντίγραφο.'))return;
  restore(decoded.next);putMeta({key:root,version:remote.version,base:await fp(snapshot())});input.value='';note('Online · επαναφέρθηκαν τα στοιχεία');
  }catch{note('Δεν έγινε σύνδεση. Τα προηγούμενα δεδομένα παραμένουν.')}finally{busy=false;show()}
 };
 copy.onclick=async()=>{if(!meta)return;try{await navigator.clipboard.writeText(meta.key);note('Ο ιδιωτικός κωδικός αντιγράφηκε. Φύλαξέ τον με ασφάλεια.')}catch{prompt('Ιδιωτικός κωδικός σύνδεσης — φύλαξέ τον, μην τον κοινοποιείς:',meta.key)}};
-disconnect.onclick=()=>{if(busy||!meta)return;if(!confirm('Να αποσυνδεθεί αυτή η συσκευή; Κράτησε τον ιδιωτικό κωδικό. Τα τοπικά και online δεδομένα δεν διαγράφονται.'))return;localStorage.removeItem(META);meta=null;conflict=null;show();note('Τοπική αποθήκευση · όχι online')};
+disconnect.onclick=()=>{if(busy||!meta)return;if(!confirm('Να αποσυνδεθεί αυτή η συσκευή; Κράτησε τον ιδιωτικό κωδικό. Τα τοπικά και online δεδομένα δεν διαγράφονται.'))return;localStorage.setItem(SIGNOUT,'1');localStorage.removeItem(META);backupSession(null);meta=null;conflict=null;show();note('Τοπική αποθήκευση · όχι online')};if($('accountLogout'))$('accountLogout').onclick=disconnect.onclick;
 pull.onclick=async()=>{if(busy||!meta||!conflict)return;if(!confirm('Να φορτωθεί το online αντίγραφο; Οι τοπικές αλλαγές θα φυλαχθούν σε αντίγραφο, αλλά δεν θα συνδυαστούν αυτόματα.'))return;busy=true;show();try{const c=conflict;restore(c.next);putMeta({...meta,version:c.remote.version,base:await fp(snapshot())});conflict=null;note('Online · συγχρονισμένο')}catch{note('Δεν έγινε επαναφορά.')}finally{busy=false;show()}};
 
 // Email is an unverified login identifier. The password is never sent to the server.
@@ -92,23 +101,23 @@ if(accountForm)accountForm.onsubmit=async e=>{
    const root=meta.key,k=await keys(root),remote=await call(k);if(remote.version<1)throw Error('missing existing vault');
    await decrypt(remote.ciphertext,k.key);
    const wrapped=await encrypt(root,a.key);
-   await accountCall('register',{id:a.id,proof:a.proof,wrapped});
+   await accountCall('register',{id:a.id,proof:a.proof,wrapped});rememberAccount(email);
    accountStatus.textContent='Ο λογαριασμός δημιουργήθηκε και συνδέθηκε με το υπάρχον Ταμείο. Φύλαξε και τον ιδιωτικό κωδικό ανάκτησης.';
   }else{
    const r=await accountCall('login',{id:a.id,proof:a.proof}),root=await unwrapRoot(r.wrapped,a.key);
    if(meta&&meta.key!==root){accountStatus.textContent='Αυτή η συσκευή έχει άλλο ενεργό Ταμείο. Κράτησε αντίγραφο πριν το αποσυνδέσεις.';return}
-   if(meta){again=true;accountStatus.textContent='Ο λογαριασμός αντιστοιχεί στο ενεργό Ταμείο.'}
+   if(meta){rememberAccount(email);again=true;accountStatus.textContent='Ο λογαριασμός αντιστοιχεί στο ενεργό Ταμείο.'}
    else rootToConnect=root;
   }
   accountPassword.value='';
  }catch(e){accountStatus.textContent=e.status===409?'Το email χρησιμοποιείται ήδη. Δοκίμασε σύνδεση.':e.status===401?'Λάθος email ή κωδικός.':e.status===429?'Πολλές προσπάθειες. Δοκίμασε σε 10 λεπτά.':'Η σύνδεση δεν ολοκληρώθηκε. Τα υπάρχοντα δεδομένα δεν άλλαξαν.'}
  finally{accountBusy=false;busy=false;show();for(const b of accountForm.querySelectorAll('button,input'))b.disabled=false}
- if(rootToConnect){input.value=rootToConnect;try{await connect.onclick();accountStatus.textContent=meta?.key===rootToConnect?'Συνδέθηκες στο υπάρχον Ταμείο.':'Δεν φορτώθηκε το Ταμείο. Δοκίμασε ξανά.'}finally{input.value=''}}
+ if(rootToConnect){input.value=rootToConnect;try{await connect.onclick();if(meta?.key===rootToConnect)rememberAccount(email);accountStatus.textContent=meta?.key===rootToConnect?'Συνδέθηκες στο υπάρχον Ταμείο.':'Δεν φορτώθηκε το Ταμείο. Δοκίμασε ξανά.'}finally{input.value=''}}
  if(again){again=false;schedule()}
 };
 retry.onclick=sync;
 const previousSave=save;save=function(){previousSave();if(meta&&!error)schedule()};
 const previousTransfer=transfer;transfer=function(raw){previousTransfer(raw);if(meta&&!error)schedule()};
 window.addEventListener('online',sync);document.addEventListener('visibilitychange',()=>{if(!document.hidden)sync()});window.addEventListener('storage',e=>{if(e.key===KEY&&e.newValue){try{const x=JSON.parse(e.newValue);if(valid(x)){state=x;settingsFill();if(typeof smartFill==='function')smartFill();render();schedule()}}catch{}}});
-meta=readMeta();show();if(meta)sync();else note('Τοπική αποθήκευση · ενεργοποίησε τον online συγχρονισμό στις Ρυθμίσεις');setInterval(()=>{if(meta&&!document.hidden&&!conflict)sync()},25000);
+meta=readMeta();show();if(meta){backupSession(meta);sync()}else{note('Τοπική αποθήκευση · έλεγχος σύνδεσης συσκευής');if(!localStorage.getItem(SIGNOUT)){sessionIO('read').then(m=>{if(meta||localStorage.getItem(SIGNOUT)||busy)return;const saved=validMeta(m);if(saved){putMeta(saved);show();sync()}else note('Τοπική αποθήκευση · σύνδεση στις Ρυθμίσεις')}).catch(()=>{if(!meta)note('Τοπική αποθήκευση · σύνδεση στις Ρυθμίσεις')})}else note('Τοπική αποθήκευση · σύνδεση στις Ρυθμίσεις')}setInterval(()=>{if(meta&&!document.hidden&&!conflict)sync()},25000);
 })();
