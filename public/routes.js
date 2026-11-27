@@ -81,4 +81,24 @@ $('routeClose').onclick=()=>{if(!route)return;const q=stats(route);if(!confirm('
  if(error)return alert('Πρόβλημα αποθήκευσης. Μην κλείσεις ακόμη.');report({...route,closed:true});if(error)return;localStorage.removeItem(ROUTE_KEY);route=null;$('routeText').value='';clearOCR();renderRoute();toast('Το δρομολόγιο έκλεισε. Τα στατιστικά διατηρήθηκαν.')
 };
 const previousRender=render;render=function(){previousRender();renderRoute()};renderRoute();
+// Private one-tap route import: URL fragment is not sent to the HTTP server.
+function importPrivateRoute(){
+ const hash=location.hash||'';if(!hash.startsWith('#route='))return;
+ try{
+  const enc=hash.slice(7);if(enc.length>60000||!/^[A-Za-z0-9_-]+$/.test(enc))throw Error('format');
+  const data=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(enc.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0))));
+  if(!data||!validDate(data.date)||data.date!==today()||typeof data.number!=='string'||data.number.length>30||!Array.isArray(data.areas)||!Array.isArray(data.rows)||data.rows.length<1||data.rows.length>500)throw Error('date or data');
+  const rows=data.rows.map((r,i)=>{if(!Array.isArray(r)||r.length!==4||!Number.isInteger(r[1])||!addressOK(r[0],data.areas[r[1]],r[2],r[3]))throw Error('row');return newStop(i+1,r[0],data.areas[r[1]],r[2],r[3])});
+  // Never overwrite a route that has completed or attempted deliveries.
+  const same=route&&route.date===data.date&&route.number===data.number&&route.stops.length===rows.length&&route.stops.every((s,i)=>s.no===rows[i].no&&s.address===rows[i].address&&s.area===rows[i].area&&s.eta===rows[i].eta&&s.parcels===rows[i].parcels);
+  go('routePage');
+  if(same){toast('Το δρομολόγιο υπάρχει ήδη. Η πρόοδος διατηρήθηκε.');return}
+  if(route&&route.stops.some(s=>s.status!=='pending'||s.tip)){alert('Υπάρχουν ήδη καταχωρισμένες παραδόσεις. Δεν αντικαταστάθηκαν.');return}
+  if(!confirm('Εισαγωγή '+rows.length+' στάσεων του δρομολογίου '+data.number+'; Επιβεβαίωσε ότι έχεις άδεια χρήσης και έλεγξε τις διευθύνσεις στο χαρτί. '+(route?'Το προηγούμενο δρομολόγιο χωρίς παραδόσεις θα αντικατασταθεί. ':'')+'Η ενεργή βάρδια δεν επηρεάζεται.'))return;
+  if(persist({id:route?.id||uid(),date:data.date,number:data.number,stops:rows,closed:false})){$('routeExpected').value=rows.length;$('routeNumber').value=data.number;$('routeText').value='';toast('Εισήχθησαν '+rows.length+' στάσεις')}
+ }catch{alert('Ο σύνδεσμος δρομολογίου δεν είναι έγκυρος ή αφορά άλλη ημέρα.')}
+ finally{history.replaceState(null,'',location.pathname+location.search)}
+}
+importPrivateRoute();window.addEventListener('hashchange',importPrivateRoute);
+
 })();
