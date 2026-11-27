@@ -23,49 +23,54 @@ function renderRoute(){
  if(!route){$('routeTitle').textContent='Δεν έχεις ενεργό δρομολόγιο';$('routeSummary').textContent='';$('routeStops').innerHTML='';return}
  const q=stats(route),filter=$('routeFilter').value||'all';$('routeTitle').textContent='Δρομολόγιο '+(route.number||'')+' · '+prettyDate(route.date);
  $('routeSummary').innerHTML='<div class="grid">'+[['Στάσεις',q.total],['Παραδόθηκαν',q.done],['Αποτυχίες / απουσίες',q.failed+q.absent],['Απομένουν',q.pending],['Δέματα παραδόθηκαν',q.parcels],['Tips στάσεων',money(q.tip)]].map(([k,v])=>'<div><small>'+k+'</small><b>'+v+'</b></div>').join('')+'</div><progress max="'+Math.max(1,q.total)+'" value="'+(q.total-q.pending)+'"></progress>';
- $('routeStops').innerHTML=route.stops.filter(s=>filter==='all'||filter===s.status).map(s=>'<div class="row"><div><b>#'+s.no+' · '+esc(s.address||'Χωρίς διεύθυνση')+'</b><b>'+states[s.status]+'</b></div><small>'+esc(s.area)+' · '+esc(s.eta||'Χωρίς ώρα')+' · '+s.parcels+' δέματα'+(s.at?' · '+new Date(s.at).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'}):'')+'</small>'+(s.address?'<a href="'+escAttr(maps(s))+'" target="_blank" rel="noopener noreferrer" style="display:block;margin:10px 0;font-weight:700">Πλοήγηση με Google Maps</a>':'<small>Συμπλήρωσε πρώτα διεύθυνση.</small>')+'<div class="grid"><button data-route-id="'+esc(s.id)+'" data-route-action="done">Παραδόθηκε</button><button data-route-id="'+esc(s.id)+'" data-route-action="absent">Απουσία</button><button data-route-id="'+esc(s.id)+'" data-route-action="failed">Δεν παραδόθηκε</button><button data-route-id="'+esc(s.id)+'" data-route-action="pending">Αναμονή</button></div><button data-route-id="'+esc(s.id)+'" data-route-action="edit">Διόρθωση</button>'+(s.status==='done'?'<button data-route-id="'+esc(s.id)+'" data-route-action="tip">Tip '+money(s.tip)+'</button>':'')+'</div>').join('')||'<p>Καμία στάση σε αυτή την κατάσταση.</p>';
+ $('routeStops').innerHTML=route.stops.filter(s=>filter==='all'||filter===s.status).map(s=>'<div class="row"><div><b>#'+s.no+' · '+esc(s.address||'Χωρίς διεύθυνση')+'</b><b>'+states[s.status]+'</b></div><small>'+esc(s.area)+' · '+esc(s.eta||'Χωρίς ώρα')+' · '+s.parcels+' δέματα'+(s.at?' · '+new Date(s.at).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'}):'')+'</small>'+(addressOK(s.address,s.area,s.eta,s.parcels)?'<a href="'+escAttr(maps(s))+'" target="_blank" rel="noopener noreferrer" style="display:block;margin:10px 0;font-weight:700">Πλοήγηση με Google Maps</a>':'<small>Συμπλήρωσε πρώτα διεύθυνση.</small>')+'<div class="grid"><button data-route-id="'+esc(s.id)+'" data-route-action="done">Παραδόθηκε</button><button data-route-id="'+esc(s.id)+'" data-route-action="absent">Απουσία</button><button data-route-id="'+esc(s.id)+'" data-route-action="failed">Δεν παραδόθηκε</button><button data-route-id="'+esc(s.id)+'" data-route-action="pending">Αναμονή</button></div><button data-route-id="'+esc(s.id)+'" data-route-action="edit">Διόρθωση</button>'+(s.status==='done'?'<button data-route-id="'+esc(s.id)+'" data-route-action="tip">Tip '+money(s.tip)+'</button>':'')+'</div>').join('')||'<p>Καμία στάση σε αυτή την κατάσταση.</p>';
+}
+function addressOK(address,area,eta,parcels){
+ return typeof address==='string'&&address.length>=4&&address.length<=180&&/\p{L}{2}/u.test(address)&&/\d{1,4}[Α-ΩA-Zα-ωa-z]?\s*$/u.test(address)&&!/\d{5,}/.test(address)&&typeof area==='string'&&/\p{L}{3}/u.test(area)&&!/\d/.test(area)&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(eta)&&Number.isInteger(parcels)&&parcels>=1&&parcels<=999
 }
 function parseRows(raw){
  const rows=[],seen=new Set();
  for(const line of raw.split(/\r?\n/)){
-  const clean=line.trim().replace(/\|/g,' ').replace(/\s+/g,' ');if(!clean)continue;
-  // Explicit safe format: number ; address ; area ; estimated time ; parcel count
+  const clean=line.trim().replace(/[|¦]/g,' ').replace(/\s+/g,' ');if(!clean)continue;
   const cols=line.split(';').map(v=>v.trim());
   let no,address='',area='',eta='',parcels=0;
-  if(cols.length>=3&&/^\d{1,3}$/.test(cols[0])){no=Number(cols[0]);address=cols[1];area=cols[2];eta=cols[3]||'';parcels=/^\d{1,3}$/.test(cols[4]||'')?Number(cols[4]):0}
+  if(cols.length===5&&/^\d{1,3}$/.test(cols[0])){no=Number(cols[0]);address=cols[1];area=cols[2];eta=cols[3];parcels=/^\d{1,3}$/.test(cols[4])?Number(cols[4]):0}
   else{
    const m=clean.match(/^(\d{1,3})[.)]?\s+(.+)$/);if(!m)continue;no=Number(m[1]);
-   // Ignore customer name and phone columns. Address is after postal code.
-   const post=m[2].match(/\b(?:\d{5}|\d{3}\s\d{2})\b\s+(.+)$/);if(!post)continue;
-   const rest=post[1];const time=rest.match(/\b(?:[01]?\d|2[0-3])[:.][0-5]\d\b/);eta=time?time[0].replace('.',':'):'';
-   let before=(time?rest.slice(0,time.index):rest).trim();
-   const region=before.match(/\s+(ΧΑΛΑΝΔΡΙ|Χαλάνδρι|ΑΓΙΑ\s+ΠΑΡΑΣΚΕΥΗ|Αγία\s+Παρασκευή|ΑΘΗΝΑ|Αθήνα|ΜΑΡΟΥΣΙ|Μαρούσι|[Α-Ωα-ωΆ-ώ]+\s*[Α-Ωα-ωΆ-ώ]*?)$/u);
-   if(region&&/\d/.test(before.slice(0,region.index))){area=region[1];address=before.slice(0,region.index).trim()}else address=before;
-   const last=rest.match(/\s(\d{1,3})$/);if(time&&last)parcels=Number(last[1]);
+   const post=m[2].match(/(?:^|\s)(?:\d{5}|\d{3}\s\d{2})\s+(.+)$/);if(!post)continue;
+   const rest=post[1];const time=rest.match(/(?:^|\s)((?:[01]\d|2[0-3])[:.][0-5]\d)(?=\s|$)/);if(!time)continue;eta=time[1].replace('.',':');
+   const before=rest.slice(0,time.index).trim();
+   // End of street is its house number; remaining text is the municipality.
+   const split=before.match(/^(.+?\d{1,4}[Α-ΩA-Zα-ωa-z]?)\s+([\p{L}][\p{L}\s.'-]+)$/u);if(!split)continue;
+   address=split[1];area=split[2].trim();
+   const last=rest.match(/\s(\d{1,3})$/);if(last)parcels=Number(last[1]);
   }
-  if(!no||seen.has(no)||!address||/\d{8,}/.test(address)||/\d{8,}/.test(area))continue;seen.add(no);rows.push(newStop(no,address,area,eta,parcels));
+  if(!no||seen.has(no)||!addressOK(address,area,eta,parcels))continue;seen.add(no);rows.push(newStop(no,address,area,eta,parcels));
  }
  return rows.sort((a,b)=>a.no-b.no).slice(0,500)
 }
+function expectedCount(){const n=Number($('routeExpected').value);return Number.isInteger(n)&&n>0&&n<=500?n:0}
+function completeRows(rows){const n=expectedCount();return n>0&&rows.length===n&&rows.every((s,i)=>s.no===i+1)}
 function clearOCR(){clearTimeout(ocrTimeout);if(frame)frame.remove();frame=null;ocrFile=null;$('routePhoto').value=''}
 $('routePhoto').onchange=()=>{const f=$('routePhoto').files[0];if(!f)return;if(!confirm('Έχεις άδεια χρήσης του δρομολογίου στην προσωπική εφαρμογή; Η φωτογραφία θα διαβαστεί τοπικά, χωρίς αποθήκευση.')){$('routePhoto').value='';return}clearTimeout(ocrTimeout);if(frame)frame.remove();frame=null;ocrFile=f;if(f.size>18000000){clearOCR();alert('Η φωτογραφία είναι πολύ μεγάλη.');return}
- $('routeOCRStatus').textContent='Φόρτωση τοπικής αναγνώρισης…';frame=document.createElement('iframe');frame.setAttribute('sandbox','allow-scripts');frame.hidden=true;frame.src='./route-ocr.html?v=1';document.body.appendChild(frame);
+ $('routeOCRStatus').textContent='Φόρτωση τοπικής αναγνώρισης…';frame=document.createElement('iframe');frame.setAttribute('sandbox','allow-scripts');frame.hidden=true;frame.src='./route-ocr.html?v=2';document.body.appendChild(frame);
  ocrTimeout=setTimeout(()=>{clearOCR();$('routeOCRStatus').textContent='Η ανάγνωση δεν ολοκληρώθηκε. Δοκίμασε αντιγραφή κειμένου από Φωτογραφίες ή χειροκίνητη εισαγωγή.'},180000);
 };
 window.addEventListener('message',e=>{if(!frame||e.source!==frame.contentWindow||!e.data?.routeOCR)return;const x=e.data;if(x.type==='ready'&&ocrFile){frame.contentWindow.postMessage({routeOCR:true,type:'read',file:ocrFile},'*');ocrFile=null}else if(x.type==='progress'){$('routeOCRStatus').textContent='Αναγνώριση · '+Math.round((Number(x.progress)||0)*100)+'%'}else if(x.type==='result'){
- const rows=parseRows(String(x.text||''));$('routeText').value=rows.map(s=>[s.no,s.address,s.area,s.eta,s.parcels].join('; ')).join('\n');$('routeOCRStatus').textContent='Αναγνωρίστηκαν '+rows.length+' στάσεις. Έλεγξε όλες τις διευθύνσεις και τον αριθμό στάσεων πριν την εισαγωγή.';clearOCR();
+ const rows=parseRows(String(x.text||''));$('routeText').value=rows.map(s=>[s.no,s.address,s.area,s.eta,s.parcels].join('; ')).join('\n');$('routeOCRStatus').textContent='Αναγνωρίστηκαν '+rows.length+' από '+(expectedCount()||'?')+' στάσεις. '+(completeRows(rows)?'Έλεγξε κάθε διεύθυνση με το χαρτί.':'Ελλιπής αναγνώριση: συμπλήρωσε τις στάσεις που λείπουν ή δοκίμασε καθαρότερη φωτογραφία.');clearOCR();
  }else if(x.type==='error'){$('routeOCRStatus').textContent=String(x.message||'Αποτυχία αναγνώρισης');clearOCR()}});
 $('routeParse').onclick=()=>{
- const rows=parseRows($('routeText').value);if(!rows.length){alert('Δεν αναγνωρίστηκαν στάσεις. Γράψε: 1; διεύθυνση; περιοχή; 09:00; 2');return}
- if(route&&route.stops.length){alert('Υπάρχει ήδη δρομολόγιο. Κλείσε το πρώτα ή πρόσθεσε στάσεις χειροκίνητα.');return}
+ const rows=parseRows($('routeText').value);if(!completeRows(rows)){alert('Η εισαγωγή δεν είναι πλήρης. Δήλωσε πόσες στάσεις έχει το χαρτί και συμπλήρωσε όλες τις γραμμές με σειρά, διεύθυνση, περιοχή, ώρα και δέματα. Αναγνωρίστηκαν '+rows.length+'.');return}
+ if(route&&route.stops.length){if(route.stops.some(s=>s.status!=='pending'||s.tip)){alert('Υπάρχουν καταχωρισμένες παραδόσεις. Δεν γίνεται αντικατάσταση.');return}if(!confirm('Αντικατάσταση του λανθασμένου δρομολογίου χωρίς ολοκληρωμένες παραδόσεις;'))return}
  if(!confirm('Εισαγωγή '+rows.length+' στάσεων; Επιβεβαίωσε ότι οι διευθύνσεις και ο αριθμός τους είναι σωστά.'))return;
- if(persist({id:uid(),number:$('routeNumber').value.trim().slice(0,30),date:today(),stops:rows,closed:false})){$('routeText').value='';$('routeOCRStatus').textContent='Εισαγωγή ολοκληρώθηκε.'}
+ if(persist({id:route?.id||uid(),number:$('routeNumber').value.trim().slice(0,30),date:today(),stops:rows,closed:false})){$('routeText').value='';$('routeOCRStatus').textContent='Εισαγωγή ολοκληρώθηκε.'}
 };
 $('routeManual').onclick=()=>{const no=route?Math.max(0,...route.stops.map(s=>s.no))+1:1,address=prompt('Διεύθυνση στάσης');if(address===null||!address.trim())return;const area=prompt('Περιοχή','');if(area===null)return;const eta=prompt('Προγραμματισμένη ώρα (προαιρετικά)','');if(eta===null)return;const raw=prompt('Αριθμός δεμάτων','1');if(raw===null||!/^\d{1,3}$/.test(raw.trim()))return;
  if(/\d{8,}/.test(address)||/\d{8,}/.test(area))return alert('Μην καταχωρίζεις τηλέφωνα ή ονόματα πελατών.');
  const x=route||{id:uid(),date:today(),number:$('routeNumber').value.trim().slice(0,30),stops:[],closed:false};persist({...x,stops:[...x.stops,newStop(no,address.trim(),area.trim(),eta,Number(raw))]})
 };
 $('routeFilter').onchange=renderRoute;
+$('routeImportText').onchange=async()=>{const f=$('routeImportText').files[0];if(!f||f.size>100000)return;try{$('routeText').value=await f.text();$('routeOCRStatus').textContent='Ελέγξτε το εισαγόμενο κείμενο και τον αριθμό στάσεων.'}catch{alert('Δεν διαβάστηκε το αρχείο.')}finally{$('routeImportText').value=''}};
 panel.addEventListener('click',e=>{const b=e.target.closest('button[data-route-action]');if(!b||!route)return;const s=route.stops.find(x=>x.id===b.dataset.routeId);if(!s)return;let next={...s},act=b.dataset.routeAction;
  if(act==='edit'){const address=prompt('Διεύθυνση',s.address);if(address===null)return;const area=prompt('Περιοχή',s.area);if(area===null)return;const eta=prompt('Ώρα',s.eta);if(eta===null)return;const n=prompt('Δέματα',String(s.parcels));if(n===null||!/^\d{1,3}$/.test(n.trim())||/\d{8,}/.test(address)||/\d{8,}/.test(area))return;next={...next,address:address.slice(0,180),area:area.slice(0,80),eta:eta.slice(0,20),parcels:Number(n)}}
  else if(act==='tip'){const raw=prompt('Φιλοδώρημα αυτής της στάσης (ευρώ)',euro(s.tip));if(raw===null||!/^\d+(?:[.,]\d{1,2})?$/.test(raw.trim())||!validMoney(cents(raw)))return;next.tip=cents(raw)}
