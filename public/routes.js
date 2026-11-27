@@ -80,6 +80,42 @@ panel.addEventListener('click',e=>{const b=e.target.closest('button[data-route-a
 $('routeClose').onclick=()=>{if(!route)return;const q=stats(route);if(!confirm('Κλείσιμο δρομολογίου; '+q.pending+' στάσεις σε αναμονή. Θα διαγραφούν οι διευθύνσεις από τη συσκευή και θα παραμείνουν μόνο τα στατιστικά. Το χρονόμετρο δεν θα σταματήσει.'))return;
  if(error)return alert('Πρόβλημα αποθήκευσης. Μην κλείσεις ακόμη.');report({...route,closed:true});if(error)return;localStorage.removeItem(ROUTE_KEY);route=null;$('routeText').value='';clearOCR();renderRoute();toast('Το δρομολόγιο έκλεισε. Τα στατιστικά διατηρήθηκαν.')
 };
+
+// Move only the active route between browser storage containers. Never copy a vault key or ledger.
+function routeTransferCopy(){
+ if(!route){alert('Δεν υπάρχει ενεργό δρομολόγιο για μεταφορά.');return}
+ const payload={v:1,route:{id:route.id,date:route.date,number:route.number,closed:false,stops:route.stops.map(s=>({id:s.id,no:s.no,address:s.address,area:s.area,eta:s.eta,parcels:s.parcels,status:s.status,tip:s.tip,at:s.at||null}))}};
+ const raw=JSON.stringify(payload);$('routeTransferText').value=raw;$('routeTransferPanel').open=true;
+ if(navigator.clipboard?.writeText)navigator.clipboard.writeText(raw).then(()=>toast('Αντιγράφηκε μόνο το δρομολόγιο. Άνοιξε την υπάρχουσα εφαρμογή.')).catch(()=>{$('routeTransferText').focus();$('routeTransferText').select();alert('Αντέγραψε το επιλεγμένο κείμενο.')});
+ else{$('routeTransferText').focus();$('routeTransferText').select();alert('Αντέγραψε το επιλεγμένο κείμενο.')}
+}
+function routeTransferImport(raw){
+ if(error)return alert('Υπάρχει πρόβλημα στο Ταμείο. Δεν έγινε μεταφορά.');
+ try{
+  if(typeof raw!=='string'||raw.length>500000)throw Error('size');
+  const p=JSON.parse(raw),x=p.route;
+  if(p.v!==1||!validRoute(x)||x.closed||!x.stops.length||new Set(x.stops.map(s=>s.id)).size!==x.stops.length||x.stops.some(s=>!addressOK(s.address,s.area,s.eta,s.parcels)))throw Error('data');
+  // Whitelist fields so no unexpected personal data can be carried into storage.
+  let incoming={id:x.id,date:x.date,number:x.number,closed:false,stops:x.stops.map(s=>({id:s.id,no:s.no,address:s.address,area:s.area,eta:s.eta,parcels:s.parcels,status:s.status,tip:s.tip,at:s.at||null}))};
+  if((state.routeReports||[]).some(r=>r.id===incoming.id&&r.closed))return alert('Το δρομολόγιο έχει ήδη κλείσει σε αυτό το Ταμείο.');
+  if(route){
+   const same=route.date===incoming.date&&route.number===incoming.number&&route.stops.length===incoming.stops.length&&route.stops.every(s=>incoming.stops.some(t=>t.no===s.no&&t.address===s.address&&t.area===s.area&&t.parcels===s.parcels));
+   if(same){
+    const combined=[];for(const s of route.stops){const t=incoming.stops.find(z=>z.no===s.no);if(s.status!=='pending'&&t.status!=='pending'&&(s.status!==t.status||s.tip!==t.tip)){return alert('Υπάρχει διαφορετική καταχώριση στη στάση '+s.no+'. Δεν άλλαξε τίποτα.')}
+     combined.push(s.status!=='pending'?s:{...t,id:s.id});
+    }incoming={...incoming,id:route.id,stops:combined};
+   }else if(route.stops.some(s=>s.status!=='pending'||s.tip))return alert('Υπάρχει άλλο δρομολόγιο με πρόοδο. Δεν αντικαταστάθηκε.');
+   else incoming.id=route.id;
+  }
+  const q=stats(incoming);
+  if(!confirm('Μεταφορά '+q.total+' στάσεων, '+q.done+' ολοκληρωμένων και '+q.pending+' σε αναμονή στο Ταμείο που έχεις ανοιχτό; Επιβεβαίωσε την άδεια χρήσης των διευθύνσεων. Οι ώρες, τα μεροκάματα και οι οικονομικές κινήσεις δεν αντικαθίστανται.'))return;
+  if(persist(incoming)){$('routeTransferText').value='';$('routeTransferPanel').open=false;toast('Το δρομολόγιο μεταφέρθηκε με την πρόοδό του.')}
+ }catch{alert('Δεν είναι έγκυρο αντίγραφο δρομολογίου. Δεν άλλαξε τίποτα.')}
+}
+$('routeTransferCopy').onclick=routeTransferCopy;
+$('routeTransferPaste').onclick=async()=>{if(navigator.clipboard?.readText){try{const raw=await navigator.clipboard.readText();routeTransferImport(raw);return}catch{}}$('routeTransferPanel').open=true;$('routeTransferText').focus();toast('Επικόλλησε το αντίγραφο στο πεδίο και πάτησε Μεταφορά.')};
+$('routeTransferApply').onclick=()=>routeTransferImport($('routeTransferText').value);
+
 const previousRender=render;render=function(){previousRender();renderRoute()};renderRoute();
 // Private one-tap route import: URL fragment is not sent to the HTTP server.
 function importPrivateRoute(){
