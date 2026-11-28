@@ -26,7 +26,7 @@ function renderRoute(){
  $('routeStops').innerHTML=route.stops.filter(s=>filter==='all'||filter===s.status).map(s=>'<div class="row"><div><b>#'+s.no+' · '+esc(s.address||'Χωρίς διεύθυνση')+'</b><b>'+states[s.status]+'</b></div><small>'+esc(s.area)+' · '+esc(s.eta||'Χωρίς ώρα')+' · '+s.parcels+' δέματα'+(s.at?' · '+new Date(s.at).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'}):'')+'</small>'+(addressOK(s.address,s.area,s.eta,s.parcels)?'<a href="'+escAttr(maps(s))+'" target="_blank" rel="noopener noreferrer" style="display:block;margin:10px 0;font-weight:700">Πλοήγηση με Google Maps</a>':'<small>Συμπλήρωσε πρώτα διεύθυνση.</small>')+'<div class="grid"><button data-route-id="'+esc(s.id)+'" data-route-action="done">Παραδόθηκε</button><button data-route-id="'+esc(s.id)+'" data-route-action="absent">Απουσία</button><button data-route-id="'+esc(s.id)+'" data-route-action="failed">Δεν παραδόθηκε</button><button data-route-id="'+esc(s.id)+'" data-route-action="pending">Αναμονή</button></div><button data-route-id="'+esc(s.id)+'" data-route-action="edit">Διόρθωση</button>'+(s.status==='done'?'<button data-route-id="'+esc(s.id)+'" data-route-action="tip">Tip '+money(s.tip)+'</button>':'')+'</div>').join('')||'<p>Καμία στάση σε αυτή την κατάσταση.</p>';
 }
 function addressOK(address,area,eta,parcels){
- return typeof address==='string'&&address.length>=4&&address.length<=180&&/\p{L}{2}/u.test(address)&&/\d{1,4}[Α-ΩA-Zα-ωa-z]?\s*$/u.test(address)&&!/\d{5,}/.test(address)&&typeof area==='string'&&/\p{L}{3}/u.test(area)&&!/\d/.test(area)&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(eta)&&Number.isInteger(parcels)&&parcels>=1&&parcels<=999
+ return typeof address==='string'&&address.length>=4&&address.length<=180&&/\p{L}{2}/u.test(address)&&/\d{1,4}\s*[Α-ΩA-Zα-ωa-z]?\s*$/u.test(address)&&!/\d{5,}/.test(address)&&typeof area==='string'&&/\p{L}{3}/u.test(area)&&!/\d/.test(area)&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(eta)&&Number.isInteger(parcels)&&parcels>=1&&parcels<=999
 }
 function parseRows(raw){
  const rows=[],seen=new Set();
@@ -62,9 +62,17 @@ window.addEventListener('message',e=>{if(!frame||e.source!==frame.contentWindow|
  candidates.sort((a,b)=>b.length-a.length);const chosen=new Map(),conflicts=new Set();const canonical=s=>[s.address,s.area,s.eta,s.parcels].join('|').normalize('NFD').replace(/\p{M}/gu,'').toUpperCase().replace(/\s+/g,' ');
  for(const rows of candidates)for(const s of rows){if(s.no<1||expected&&s.no>expected)continue;if(chosen.has(s.no)&&canonical(chosen.get(s.no))!==canonical(s)){conflicts.add(s.no);continue}if(!chosen.has(s.no))chosen.set(s.no,s)}
  const rows=[...chosen.values()].sort((a,b)=>a.no-b.no);$('routeText').value=rows.map(s=>[s.no,s.address,s.area,s.eta,s.parcels].join('; ')).join('\n');
- const missing=Array.from({length:expected},(_,i)=>i+1).filter(n=>!chosen.has(n));
- $('routeOCRStatus').textContent='Αναγνωρίστηκαν '+rows.length+' από '+(expected||'?')+' στάσεις. '+(missing.length?'Λείπουν: '+missing.join(', ')+'. ':'')+(conflicts.size?'Διαφορετικές αναγνώσεις στις στάσεις '+[...conflicts].sort((a,b)=>a-b).join(', ')+'. ':'')+(rows.length?'Έλεγξε τις διευθύνσεις με το πρωτότυπο πριν την εισαγωγή.':'Δεν βρέθηκαν έγκυρες γραμμές. Μην καταχωρίσεις λανθασμένες διευθύνσεις. Η φωτογραφία χρειάζεται καθαρά γράμματα, χωρίς κίνηση ή διπλό περίγραμμα. Τοποθέτησε το χαρτί σε επίπεδη επιφάνεια, φωτογράφισε από πάνω και γέμισε το κάδρο με τον πίνακα.');clearOCR();
+ const missing=Array.from({length:expected},(_,i)=>i+1).filter(n=>!chosen.has(n));const bestWords=Math.max(0,...(x.passes||[]).map(p=>Number(p.wordCount)||0));
+ $('routeOCRStatus').textContent='Αναγνωρίστηκαν '+rows.length+' από '+(expected||'?')+' στάσεις. '+(missing.length?'Λείπουν: '+missing.join(', ')+'. ':'')+(conflicts.size?'Διαφορετικές αναγνώσεις στις στάσεις '+[...conflicts].sort((a,b)=>a-b).join(', ')+'. ':'')+(rows.length?'Έλεγξε τις διευθύνσεις με το πρωτότυπο πριν την εισαγωγή.':'Η ανάγνωση επέστρεψε '+bestWords+' λέξεις, αλλά καμία πλήρη έγκυρη στάση. Χρησιμοποίησε την επικόλληση ελεγμένης λίστας. Δεν αποθηκεύτηκαν λάθος διευθύνσεις.');clearOCR();
  }else if(x.type==='error'){$('routeOCRStatus').textContent=String(x.message||'Αποτυχία αναγνώρισης');clearOCR()}});
+$('routePasteList').onclick=async()=>{
+ const field=$('routeText');
+ try{const raw=await navigator.clipboard.readText();if(!raw.trim()||raw.length>100000)throw Error('empty');
+ const rows=parseRows(raw);if(!rows.length){field.focus();toast('Επικόλλησε τη λίστα στο πεδίο.');return}
+ field.value=raw;const count=expectedCount();$('routeOCRStatus').textContent='Έτοιμη λίστα: '+rows.length+' από '+(count||'?')+' έγκυρες στάσεις. Έλεγξε με το χαρτί και πάτησε Εισαγωγή ελεγμένων στάσεων.';
+ field.scrollIntoView({block:'center'});
+ }catch{field.focus();toast('Κράτησε πατημένο το πεδίο και επίλεξε Επικόλληση.')}
+};
 $('routeParse').onclick=()=>{
  const rows=parseRows($('routeText').value);if(!completeRows(rows)){alert('Η εισαγωγή δεν είναι πλήρης. Δήλωσε πόσες στάσεις έχει το χαρτί και συμπλήρωσε όλες τις γραμμές με σειρά, διεύθυνση, περιοχή, ώρα και δέματα. Αναγνωρίστηκαν '+rows.length+'.');return}
  if(route&&route.stops.length){if(route.stops.some(s=>s.status!=='pending'||s.tip)){alert('Υπάρχουν καταχωρισμένες παραδόσεις. Δεν γίνεται αντικατάσταση.');return}if(!confirm('Αντικατάσταση του λανθασμένου δρομολογίου χωρίς ολοκληρωμένες παραδόσεις;'))return}
