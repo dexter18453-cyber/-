@@ -51,3 +51,21 @@ function routeRemoveGrid(canvas){
  };
  stroke(true);stroke(false);return out;
 }
+
+// Crop away the dark surroundings before scaling. Estimate paper extent robustly.
+function routeCropPaper(canvas){
+ const ctx=canvas.getContext('2d',{willReadFrequently:true}),w=canvas.width,h=canvas.height,p=ctx.getImageData(0,0,w,h).data,step=Math.max(1,Math.floor(w/350)),ys=[],xs=[];
+ for(let y=0;y<h;y+=step){let bright=0,n=0;for(let x=0;x<w;x+=step){const i=(y*w+x)*4;bright+=(p[i]+p[i+1]+p[i+2])/3>145;n++}if(bright/n>.45)ys.push(y)}
+ if(!ys.length)return canvas;let y0=ys[0],y1=ys[ys.length-1];
+ if(y1-y0<h*.3)return canvas;
+ for(let x=0;x<w;x+=step){let bright=0,n=0;for(let y=y0;y<=y1;y+=step){const i=(y*w+x)*4;bright+=(p[i]+p[i+1]+p[i+2])/3>145;n++}if(bright/n>.45)xs.push(x)}
+ if(!xs.length)return canvas;let x0=xs[0],x1=xs[xs.length-1];if(x1-x0<w*.5)return canvas;
+ const pad=Math.round(Math.min(w,h)*.035);x0=Math.max(0,x0-pad);y0=Math.max(0,y0-pad);x1=Math.min(w,x1+pad);y1=Math.min(h,y1+pad);
+ const out=document.createElement('canvas');out.width=x1-x0;out.height=y1-y0;out.getContext('2d').drawImage(canvas,x0,y0,out.width,out.height,0,0,out.width,out.height);return out;
+}
+function routeSharpen(canvas){
+ const w=canvas.width,h=canvas.height,ctx=canvas.getContext('2d',{willReadFrequently:true}),im=ctx.getImageData(0,0,w,h),p=im.data,gray=new Uint8Array(w*h);
+ for(let i=0;i<gray.length;i++)gray[i]=Math.round(.299*p[i*4]+.587*p[i*4+1]+.114*p[i*4+2]);
+ for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x,v=Math.max(0,Math.min(255,gray[i]*2.6-.4*(gray[i-1]+gray[i+1]+gray[i-w]+gray[i+w])));p[i*4]=p[i*4+1]=p[i*4+2]=v}
+ const out=document.createElement('canvas');out.width=w;out.height=h;out.getContext('2d').putImageData(im,0,0);return out;
+}
